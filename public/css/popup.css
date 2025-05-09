@@ -1,0 +1,64 @@
+#toolPopup {
+  position: absolute;
+  display: none;
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  padding: 12px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+  z-index: 120;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.popup-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+#toolPopup input[type="range"] {
+  -webkit-appearance: none;
+  width: 140px;
+  height: 6px;
+  background: #eee;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+#toolPopup input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  background: #333;
+  border-radius: 50%;
+  cursor: pointer;
+  margin-top: -4px;
+}
+
+#toolPopup input[type="range"]::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  background: #333;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+#toolPopup input[type="color"] {
+  width: 80px;
+  height: 32px;
+  border: none;
+  cursor: pointer;
+}
+
+#toolPopup input[type="number"] {
+  width: 50px;
+  font-size: 14px;
+  text-align: center;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  padding: 4px;
+  background: #f9f9f9;
+} 
