@@ -14,19 +14,15 @@ export class Tools {
   }
 
   setupEventListeners() {
-    document.querySelectorAll(".toolBtn").forEach((btn) =>
-      btn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        const t = btn.dataset.tool;
-        if (t === "undo") this.canvas.undo();
-        else if (t === "redo") this.canvas.redo();
-        else {
-          this.currentTool = t;
-          this.updateToolUI();
-          this.showToolPopup(btn);
-        }
-      })
-    );
+    this.toolPanel.addEventListener("click", (e) => {
+      const btn = e.target.closest(".toolBtn");
+      if (!btn) return;
+      const tool = btn.dataset.tool;
+      if (["pen", "eraser", "text", "lasso"].includes(tool)) {
+        this.currentTool = tool;
+        this.updateToolUI();
+      }
+    });
 
     document.addEventListener("click", (e) => {
       if (!this.toolPanel.contains(e.target) && !this.toolPopup.contains(e.target))

@@ -17,6 +17,12 @@ export class Canvas {
     this.undoStack = [];
     this.redoStack = [];
     this.maxUndoSteps = 50;
+    this.lassoPath = null; // 올가미 경로
+    this.isLassoing = false; // 올가미 중 여부
+    this.isLassoMoving = false; // 올가미 이동 중 여부
+    this.lassoMoveStart = null; // 이동 시작점
+    this.lassoSelectedStrokes = null; // 선택된 stroke 인덱스
+    this.lassoHovering = false; // 올가미 내부에 마우스가 있는지
     this.setupEventListeners();
     this.setupCanvas();
   }
@@ -55,6 +61,25 @@ export class Canvas {
     };
   }
 
+  // 점이 다각형 내부에 있는지 판별 (ray-casting 알고리즘)
+  pointInPolygon(x, y, polygon) {
+    let inside = false;
+    for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+      const xi = polygon[i].x, yi = polygon[i].y;
+      const xj = polygon[j].x, yj = polygon[j].y;
+      const intersect = ((yi > y) !== (yj > y)) &&
+        (x < (xj - xi) * (y - yi) / (yj - yi + 0.00001) + xi);
+      if (intersect) inside = !inside;
+    }
+    return inside;
+  }
+
+  // stroke가 올가미 내부에 완전히 포함되는지 판별
+  strokeInLasso(stroke, lasso) {
+    if (!stroke.points || stroke.points.length === 0) return false;
+    return stroke.points.every(pt => this.pointInPolygon(pt.x, pt.y, lasso));
+  }
+
   handlePointerDown(e) {
     if (e.button === 2) { // 우클릭 팬 시작
       this.isPanning = true;
@@ -65,6 +90,35 @@ export class Canvas {
       return;
     }
     if (e.button === 0) {
+      if (this.lassoPath && this.lassoPath.length > 2 && !this.isLassoing) {
+        // 닫힌 올가미 경로가 있을 때 내부 클릭 시 이동 시작
+        const rect = this.canvas.getBoundingClientRect();
+        const sx = e.clientX - rect.left;
+        const sy = e.clientY - rect.top;
+        const { x, y } = this.toWorld(sx, sy);
+        if (this.pointInPolygon(x, y, this.lassoPath)) {
+          // 올가미 내부 클릭: 이동 시작
+          this.isLassoMoving = true;
+          this.lassoMoveStart = { x, y };
+          // 선택된 stroke 인덱스 기록
+          const strokes = this.layers.layers[this.layers.currentLayer].strokes;
+          this.lassoSelectedStrokes = strokes
+            .map((stroke, idx) => this.strokeInLasso(stroke, this.lassoPath) ? idx : -1)
+            .filter(idx => idx !== -1);
+          return;
+        }
+      }
+      if (this.tools.currentTool === "lasso") {
+        // 올가미 시작
+        const rect = this.canvas.getBoundingClientRect();
+        const sx = e.clientX - rect.left;
+        const sy = e.clientY - rect.top;
+        const { x, y } = this.toWorld(sx, sy);
+        this.lassoPath = [{ x, y }];
+        this.isLassoing = true;
+        this.drawAll();
+        return;
+      }
       if (this.tools.currentTool === "text") {
         console.log("[텍스트] 텍스트 도구 선택됨, 입력 위치 클릭");
         // 텍스트 입력창 띄우기
@@ -101,6 +155,50 @@ export class Canvas {
       this.drawAll();
       return;
     }
+    // 올가미 상태별 커서 처리
+    if (this.lassoPath && this.lassoPath.length > 1) {
+      if (this.isLassoing) {
+        this.canvas.style.cursor = "crosshair";
+      } else {
+        this.canvas.style.cursor = "move";
+      }
+    } else {
+      this.canvas.style.cursor = "crosshair";
+    }
+    if (this.isLassoMoving && this.lassoMoveStart && this.lassoSelectedStrokes) {
+      const rect = this.canvas.getBoundingClientRect();
+      const sx = e.clientX - rect.left;
+      const sy = e.clientY - rect.top;
+      const { x, y } = this.toWorld(sx, sy);
+      const dx = x - this.lassoMoveStart.x;
+      const dy = y - this.lassoMoveStart.y;
+      // 올가미 경로 이동
+      this.lassoPath = this.lassoPath.map(pt => ({ x: pt.x + dx, y: pt.y + dy }));
+      // 선택된 stroke 이동
+      const strokes = this.layers.layers[this.layers.currentLayer].strokes;
+      this.lassoSelectedStrokes.forEach(idx => {
+        const stroke = strokes[idx];
+        if (stroke.points) {
+          stroke.points = stroke.points.map(pt => ({ x: pt.x + dx, y: pt.y + dy }));
+        }
+        if (stroke.tool === "text") {
+          stroke.x += dx;
+          stroke.y += dy;
+        }
+      });
+      this.lassoMoveStart = { x, y };
+      this.drawAll();
+      return;
+    }
+    if (this.isLassoing) {
+      const rect = this.canvas.getBoundingClientRect();
+      const sx = e.clientX - rect.left;
+      const sy = e.clientY - rect.top;
+      const { x, y } = this.toWorld(sx, sy);
+      this.lassoPath.push({ x, y });
+      this.drawAll();
+      return;
+    }
     if (!this.isDrawing) return;
     const rect = this.canvas.getBoundingClientRect();
     const sx = e.clientX - rect.left;
@@ -130,6 +228,23 @@ export class Canvas {
       this.isPanning = false;
       return;
     }
+    if (this.isLassoMoving) {
+      this.isLassoMoving = false;
+      this.lassoMoveStart = null;
+      this.lassoSelectedStrokes = null;
+      this.saveState();
+      return;
+    }
+    if (this.isLassoing) {
+      this.isLassoing = false;
+      // 닫힌 경로로 만듦
+      if (this.lassoPath && this.lassoPath.length > 2) {
+        this.lassoPath.push({ ...this.lassoPath[0] });
+      }
+      this.drawAll();
+      // (여기서 선택된 오브젝트 처리 가능)
+      return;
+    }
     if (this.isDrawing) {
       this.isDrawing = false;
       this.saveState();
@@ -149,6 +264,7 @@ export class Canvas {
     this.offsetX = sx - wx * this.zoom;
     this.offsetY = sy - wy * this.zoom;
     this.drawAll();
+    this.updateTextInputPositionAndStyle(); // 텍스트 입력창 위치/크기 갱신
   }
 
   handleMouseMove(e) {
@@ -186,14 +302,14 @@ export class Canvas {
     const scr = this.toScreen(x, y);
     input.style.left = scr.x + "px";
     input.style.top = scr.y + "px";
-    input.style.fontSize = this.tools.textFontSize + "px";
+    input.style.fontSize = (this.tools.textFontSize * this.zoom) + "px";
     input.style.fontFamily = this.tools.textFontFamily;
     input.style.color = this.tools.textColor;
     input.style.border = "2px solid #007aff";
     input.style.background = "#fff";
     input.style.zIndex = 99999;
-    input.style.padding = "4px 8px";
-    input.style.minWidth = "60px";
+    input.style.padding = (4 * this.zoom) + "px " + (8 * this.zoom) + "px";
+    input.style.minWidth = (60 * this.zoom) + "px";
     input.style.outline = "2px solid #007aff";
     input.style.boxShadow = "0 2px 8px rgba(0,0,0,0.15)";
     input.style.display = "block";
@@ -202,6 +318,7 @@ export class Canvas {
       input.focus();
     });
     this.textInputEl = input;
+    this.textInputPos = { x, y }; // 입력 위치 저장
     console.log("[텍스트] 입력창 생성 at", x, y, input);
     let finished = false;
     const finish = () => {
@@ -225,6 +342,7 @@ export class Canvas {
         this.textInputEl.remove();
       }
       this.textInputEl = null;
+      this.textInputPos = null;
     };
     input.addEventListener("keydown", (e) => {
       if (e.key === "Enter") {
@@ -235,6 +353,17 @@ export class Canvas {
       }
     });
     input.addEventListener("blur", finish);
+  }
+
+  updateTextInputPositionAndStyle() {
+    if (!this.textInputEl || !this.textInputPos) return;
+    const { x, y } = this.textInputPos;
+    const scr = this.toScreen(x, y);
+    this.textInputEl.style.left = scr.x + "px";
+    this.textInputEl.style.top = scr.y + "px";
+    this.textInputEl.style.fontSize = (this.tools.textFontSize * this.zoom) + "px";
+    this.textInputEl.style.padding = (4 * this.zoom) + "px " + (8 * this.zoom) + "px";
+    this.textInputEl.style.minWidth = (60 * this.zoom) + "px";
   }
 
   drawAll() {
@@ -269,6 +398,56 @@ export class Canvas {
         });
       }
     });
+    // 올가미 경로 시각화
+    if (this.lassoPath && this.lassoPath.length > 1) {
+      this.ctx.globalCompositeOperation = "source-over";
+      this.ctx.save();
+      if (this.isLassoing) {
+        // 올가미 치는 중: 주황색 점선
+        this.ctx.strokeStyle = "#ff9800";
+        this.ctx.lineWidth = 2 / this.zoom;
+        this.ctx.setLineDash([8 / this.zoom, 4 / this.zoom]);
+      } else {
+        // 올가미 친 상태: 초록색 실선
+        this.ctx.strokeStyle = "#1ec41e";
+        this.ctx.lineWidth = 3 / this.zoom;
+        this.ctx.setLineDash([]);
+      }
+      this.ctx.beginPath();
+      this.ctx.moveTo(this.lassoPath[0].x, this.lassoPath[0].y);
+      for (let i = 1; i < this.lassoPath.length; i++) {
+        this.ctx.lineTo(this.lassoPath[i].x, this.lassoPath[i].y);
+      }
+      this.ctx.stroke();
+      this.ctx.setLineDash([]);
+      // === 올가미 이동 가능 상태: 상하좌우 화살표 표시 ===
+      if (!this.isLassoing) {
+        // bounding box 계산
+        let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+        this.lassoPath.forEach(pt => {
+          if (pt.x < minX) minX = pt.x;
+          if (pt.x > maxX) maxX = pt.x;
+          if (pt.y < minY) minY = pt.y;
+          if (pt.y > maxY) maxY = pt.y;
+        });
+        const cx = (minX + maxX) / 2;
+        const cy = (minY + maxY) / 2;
+        const arrSize = 24 / this.zoom;
+        this.ctx.font = `${arrSize}px sans-serif`;
+        this.ctx.textAlign = "center";
+        this.ctx.textBaseline = "middle";
+        this.ctx.fillStyle = "#1ec41e";
+        // 위
+        this.ctx.fillText("↑", cx, minY - arrSize * 0.7);
+        // 아래
+        this.ctx.fillText("↓", cx, maxY + arrSize * 0.7);
+        // 왼쪽
+        this.ctx.fillText("←", minX - arrSize * 0.7, cy);
+        // 오른쪽
+        this.ctx.fillText("→", maxX + arrSize * 0.7, cy);
+      }
+      this.ctx.restore();
+    }
     this.ctx.setTransform(1, 0, 0, 1, 0, 0); // 변환 초기화
   }
 
